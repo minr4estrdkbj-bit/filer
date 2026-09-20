@@ -1,0 +1,640 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"embed"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io/fs"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+//go:embed web/*
+var webFS embed.FS
+
+const (
+	DefaultPort      = 8082
+	HeartbeatTimeout = 5 * time.Second
+)
+
+type FileItem struct {
+	Name          string `json:"name"`
+	Path          string `json:"path"`
+	IsDir         bool   `json:"isDir"`
+	IsSymlink     bool   `json:"isSymlink"`
+	SymlinkTarget string `json:"symlinkTarget,omitempty"`
+	Size          int64  `json:"size"`
+	SizeHuman     string `json:"sizeHuman"`
+	ModTime       string `json:"modTime"`
+	Mode          string `json:"mode"`
+	Ext           string `json:"ext"`
+}
+
+type LsResponse struct {
+	Current string     `json:"current"`
+	Parent  string     `json:"parent"`
+	Items   []FileItem `json:"items"`
+	Error   string     `json:"error,omitempty"`
+}
+
+var (
+	isPersistentServer bool
+	lastHeartbeat      time.Time
+	connectedOnce      bool
+	stateMu            sync.Mutex
+	shutdownChan       = make(chan string, 1)
+)
+
+func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "service":
+			handleServiceCommand(os.Args[2:])
+			return
+		case "server":
+			handleServerCommand(os.Args[2:])
+			return
+		}
+	}
+
+	fsFlags := flag.NewFlagSet("filer", flag.ExitOnError)
+	portFlag := fsFlags.Int("port", DefaultPort, "ポート番号")
+	fsFlags.IntVar(portFlag, "p", DefaultPort, "ポート番号 (短縮)")
+	appFlag := fsFlags.Bool("app", false, "独立したアプリウィンドウで起動する")
+	foregroundFlag := fsFlags.Bool("foreground", false, "フォアグラウンドで実行する")
+	fsFlags.BoolVar(foregroundFlag, "f", false, "フォアグラウンドで実行する (短縮)")
+	noBrowserFlag := fsFlags.Bool("no-browser", false, "ブラウザを自動起動しない")
+
+	fsFlags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "使用法: filer [オプション] [ディレクトリパス]\n\n")
+		fmt.Fprintf(os.Stderr, "引数:\n")
+		fmt.Fprintf(os.Stderr, "  [ディレクトリパス]  開くフォルダ (省略時はカレントディレクトリ)\n\n")
+		fmt.Fprintf(os.Stderr, "サブコマンド:\n")
+		fmt.Fprintf(os.Stderr, "  server            常駐バックグラウンドサーバーを起動\n")
+		fmt.Fprintf(os.Stderr, "  service install   ログイン時自動起動の常駐サービスを登録・起動\n")
+		fmt.Fprintf(os.Stderr, "  service status    常駐サービスの稼働状態を確認\n")
+		fmt.Fprintf(os.Stderr, "  service uninstall 常駐サービスを解除・停止\n\n")
+		fmt.Fprintf(os.Stderr, "オプション:\n")
+		fsFlags.PrintDefaults()
+	}
+
+	_ = fsFlags.Parse(os.Args[1:])
+
+	targetDir := "."
+	if fsFlags.NArg() > 0 {
+		targetDir = fsFlags.Arg(0)
+	}
+
+	absDir, err := filepath.Abs(targetDir)
+	if err != nil {
+		log.Fatalf("パスの解決に失敗しました: %v", err)
+	}
+
+	// 1. すでにポート 8082 (または指定ポート) でサーバーが動いているか確認
+	if isServerRunning(*portFlag) {
+		targetURL := fmt.Sprintf("http://localhost:%d/?cwd=%s", *portFlag, url.QueryEscape(absDir))
+		if !*noBrowserFlag {
+			openBrowser(targetURL, *appFlag)
+		} else {
+			fmt.Printf("URL: %s\n", targetURL)
+		}
+		return
+	}
+
+	// 2. バックグラウンド起動処理
+	isBg := os.Getenv("_FILER_BACKGROUND_SERVER") == "1"
+	if !*foregroundFlag && !isBg {
+		launchBackgroundProcess(absDir, *portFlag, *appFlag, *noBrowserFlag)
+		return
+	}
+
+	// 3. サーバー実行 (オンデマンド)
+	runOnDemandServer(absDir, *portFlag, *appFlag, *noBrowserFlag, *foregroundFlag)
+}
+
+func isServerRunning(port int) bool {
+	client := http.Client{Timeout: 300 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/ping", port))
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+func launchBackgroundProcess(targetDir string, port int, appMode bool, noBrowser bool) {
+	execPath, err := os.Executable()
+	if err != nil {
+		log.Fatalf("実行ファイルのパス取得に失敗しました: %v", err)
+	}
+
+	args := []string{
+		fmt.Sprintf("-port=%d", port),
+	}
+	if appMode {
+		args = append(args, "-app")
+	}
+	if noBrowser {
+		args = append(args, "-no-browser")
+	}
+	args = append(args, targetDir)
+
+	cmd := exec.Command(execPath, args...)
+	cmd.Env = append(os.Environ(), "_FILER_BACKGROUND_SERVER=1")
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("バックグラウンド起動に失敗しました: %v", err)
+	}
+
+	// サーバーの立ち上がりを少し待つ
+	for i := 0; i < 20; i++ {
+		time.Sleep(50 * time.Millisecond)
+		if isServerRunning(port) {
+			break
+		}
+	}
+
+	targetURL := fmt.Sprintf("http://localhost:%d/?cwd=%s", port, url.QueryEscape(targetDir))
+	if !noBrowser {
+		openBrowser(targetURL, appMode)
+	} else {
+		fmt.Printf("URL: %s\n", targetURL)
+	}
+}
+
+func runOnDemandServer(initialDir string, port int, appMode bool, noBrowser bool, foreground bool) {
+	isPersistentServer = false
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("ポートのバインドに失敗しました (%s): %v", addr, err)
+	}
+
+	mux := createMux()
+
+	server := &http.Server{
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+	}
+
+	targetURL := fmt.Sprintf("http://localhost:%d/?cwd=%s", port, url.QueryEscape(initialDir))
+
+	if foreground {
+		fmt.Println("==================================================")
+		fmt.Println("🚀 Filer - ファイルマネージャー (フォアグラウンド)")
+		fmt.Printf("📁 フォルダ: %s\n", initialDir)
+		fmt.Printf("🌐 URL:     %s\n", targetURL)
+		fmt.Println("💡 ブラウザを閉じるか Ctrl+C で終了します")
+		fmt.Println("==================================================")
+		if !noBrowser {
+			openBrowser(targetURL, appMode)
+		}
+	}
+
+	// 終了監視 (ブラウザ離脱/タブ全閉じ)
+	go func() {
+		time.Sleep(2 * time.Second)
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			stateMu.Lock()
+			if connectedOnce && time.Since(lastHeartbeat) > HeartbeatTimeout {
+				stateMu.Unlock()
+				triggerShutdown("ブラウザが閉じられたため終了しました。")
+				return
+			}
+			stateMu.Unlock()
+		}
+	}()
+
+	// シグナルハンドラ
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		select {
+		case sig := <-sigChan:
+			if foreground {
+				fmt.Printf("\nシグナルを受信しました (%v)。終了します...\n", sig)
+			}
+		case reason := <-shutdownChan:
+			if foreground {
+				fmt.Println(reason)
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+		_ = listener.Close()
+		os.Exit(0)
+	}()
+
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatalf("Server error: %v", err)
+	}
+}
+
+func handleServerCommand(args []string) {
+	fsFlags := flag.NewFlagSet("server", flag.ExitOnError)
+	portFlag := fsFlags.Int("port", DefaultPort, "ポート番号")
+	foregroundFlag := fsFlags.Bool("foreground", false, "フォアグラウンドで実行")
+	fsFlags.BoolVar(foregroundFlag, "f", false, "フォアグラウンドで実行 (短縮)")
+
+	_ = fsFlags.Parse(args)
+
+	isBg := os.Getenv("_FILER_BACKGROUND_SERVER") == "1"
+	if !*foregroundFlag && !isBg {
+		execPath, err := os.Executable()
+		if err != nil {
+			log.Fatalf("実行ファイルのパス取得に失敗しました: %v", err)
+		}
+
+		cmd := exec.Command(execPath, "server", "-f", fmt.Sprintf("-port=%d", *portFlag))
+		cmd.Env = append(os.Environ(), "_FILER_BACKGROUND_SERVER=1")
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			log.Fatalf("常駐サーバーの起動に失敗しました: %v", err)
+		}
+
+		fmt.Println("==================================================")
+		fmt.Println("✅ Filer 常駐サーバーをバックグラウンドで起動しました")
+		fmt.Printf("🌐 URL: http://localhost:%d/\n", *portFlag)
+		fmt.Println("==================================================")
+		return
+	}
+
+	runPersistentServer(*portFlag, *foregroundFlag)
+}
+
+func runPersistentServer(port int, foreground bool) {
+	isPersistentServer = true
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("ポートのバインドに失敗しました (%s): %v", addr, err)
+	}
+
+	mux := createMux()
+
+	server := &http.Server{
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+		_ = listener.Close()
+		os.Exit(0)
+	}()
+
+	if foreground {
+		fmt.Println("==================================================")
+		fmt.Println("         Filer 常駐サーバーが起動しました         ")
+		fmt.Println("==================================================")
+		fmt.Printf("Listening: http://%s/\n", addr)
+		fmt.Println("ブラウザでお気に入り登録しておけば、いつでも開けます。")
+		fmt.Println("停止するには Ctrl+C を押してください。")
+		fmt.Println("==================================================")
+	}
+
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatalf("Server error: %v", err)
+	}
+}
+
+func handleServiceCommand(args []string) {
+	action := "status"
+	if len(args) > 0 {
+		action = args[0]
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatalf("ホームディレクトリの取得に失敗しました: %v", err)
+	}
+	servicePath := filepath.Join(homeDir, ".config", "systemd", "user", "filer.service")
+
+	switch action {
+	case "install":
+		execPath, err := exec.LookPath("filer")
+		if err != nil {
+			execPath, err = os.Executable()
+			if err != nil {
+				log.Fatalf("filer コマンドのパス取得に失敗しました: %v", err)
+			}
+		}
+
+		_ = os.MkdirAll(filepath.Dir(servicePath), 0755)
+
+		serviceContent := fmt.Sprintf(`[Unit]
+Description=Filer Persistent File Manager Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%s server -f
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+`, execPath)
+
+		if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
+			log.Fatalf("サービスファイルの書き込みに失敗しました: %v", err)
+		}
+
+		_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+		if err := exec.Command("systemctl", "--user", "enable", "--now", "filer.service").Run(); err != nil {
+			log.Fatalf("サービスの有効化・起動に失敗しました: %v", err)
+		}
+
+		fmt.Println("==================================================")
+		fmt.Println("✅ Filer 常駐サービスを登録・起動しました！")
+		fmt.Println("🌐 URL: http://localhost:8082/")
+		fmt.Println("💡 ブラウザでお気に入りに登録しておけば、")
+		fmt.Println("   いつでもワンクリックでファイル一覧を開けます。")
+		fmt.Println("")
+		fmt.Println("管理コマンド:")
+		fmt.Println("  ステータス確認  : filer service status")
+		fmt.Println("  サービス一時停止: systemctl --user stop filer")
+		fmt.Println("  アンインストール: filer service uninstall")
+		fmt.Println("==================================================")
+
+	case "uninstall":
+		_ = exec.Command("systemctl", "--user", "disable", "--now", "filer.service").Run()
+		_ = os.Remove(servicePath)
+		_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+		fmt.Println("✅ Filer 常駐サービスを停止・削除しました。")
+
+	case "status":
+		cmd := exec.Command("systemctl", "--user", "status", "filer.service")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		_ = cmd.Run()
+
+	default:
+		fmt.Println("使用方法: filer service [install|uninstall|status]")
+	}
+}
+
+func triggerShutdown(reason string) {
+	if isPersistentServer {
+		return
+	}
+	select {
+	case shutdownChan <- reason:
+	default:
+	}
+}
+
+func createMux() *http.ServeMux {
+	mux := http.NewServeMux()
+
+	// API
+	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("pong"))
+	})
+
+	mux.HandleFunc("/api/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		stateMu.Lock()
+		connectedOnce = true
+		lastHeartbeat = time.Now()
+		stateMu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("/api/close", func(w http.ResponseWriter, r *http.Request) {
+		triggerShutdown("ブラウザが閉じられたため終了しました。")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("/api/ls", handleLs)
+
+	// 静的アセット配信
+	webSubFS, err := fs.Sub(webFS, "web")
+	if err != nil {
+		log.Fatalf("埋め込みアセットの読み込みに失敗しました: %v", err)
+	}
+
+	fileServer := http.FileServer(http.FS(webSubFS))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			data, err := webSubFS.Open("index.html")
+			if err == nil {
+				defer data.Close()
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				http.ServeContent(w, r, "index.html", time.Time{}, data.(interface {
+					Read([]byte) (int, error)
+					Seek(int64, int) (int64, error)
+				}))
+				return
+			}
+		}
+		fileServer.ServeHTTP(w, r)
+	})
+
+	return mux
+}
+
+func handleLs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	stateMu.Lock()
+	connectedOnce = true
+	lastHeartbeat = time.Now()
+	stateMu.Unlock()
+
+	targetDir := r.URL.Query().Get("cwd")
+	if targetDir == "" {
+		homeDir, _ := os.UserHomeDir()
+		targetDir = homeDir
+	}
+
+	absDir, err := filepath.Abs(targetDir)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("パスの解決に失敗しました: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	entries, err := os.ReadDir(absDir)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("ディレクトリの読み込みに失敗しました: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	parent := filepath.Dir(absDir)
+
+	items := make([]FileItem, 0, len(entries))
+	for _, e := range entries {
+		name := e.Name()
+		itemPath := filepath.Join(absDir, name)
+
+		isSymlink := (e.Type() & os.ModeSymlink) != 0
+		var symlinkTarget string
+		if isSymlink {
+			if target, err := os.Readlink(itemPath); err == nil {
+				symlinkTarget = target
+			}
+		}
+
+		info, err := e.Info()
+		var size int64
+		var modTime time.Time
+		var mode string
+
+		if err == nil {
+			size = info.Size()
+			modTime = info.ModTime()
+			mode = info.Mode().String()
+		} else {
+			mode = "----------"
+		}
+
+		ext := strings.TrimPrefix(filepath.Ext(name), ".")
+
+		items = append(items, FileItem{
+			Name:          name,
+			Path:          itemPath,
+			IsDir:         e.IsDir(),
+			IsSymlink:     isSymlink,
+			SymlinkTarget: symlinkTarget,
+			Size:          size,
+			SizeHuman:     formatSize(size),
+			ModTime:       modTime.Format("2006-01-02 15:04:05"),
+			Mode:          mode,
+			Ext:           ext,
+		})
+	}
+
+	resp := LsResponse{
+		Current: absDir,
+		Parent:  parent,
+		Items:   items,
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func formatSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func openBrowser(url string, appMode bool) {
+	if appMode && openAppWindow(url) {
+		return
+	}
+	openDefaultBrowser(url)
+}
+
+func openAppWindow(url string) bool {
+	switch runtime.GOOS {
+	case "linux":
+		candidates := []string{
+			"google-chrome",
+			"google-chrome-stable",
+			"chromium",
+			"chromium-browser",
+			"brave-browser",
+			"microsoft-edge",
+			"msedge",
+		}
+		for _, name := range candidates {
+			if path, err := exec.LookPath(name); err == nil {
+				cmd := exec.Command(path, fmt.Sprintf("--app=%s", url))
+				if err := cmd.Start(); err == nil {
+					return true
+				}
+			}
+		}
+	case "darwin":
+		candidates := []string{
+			"Google Chrome",
+			"Chromium",
+			"Brave Browser",
+			"Microsoft Edge",
+		}
+		for _, name := range candidates {
+			cmd := exec.Command("open", "-na", name, "--args", fmt.Sprintf("--app=%s", url))
+			if err := cmd.Start(); err == nil {
+				return true
+			}
+		}
+	case "windows":
+		candidates := []string{"chrome.exe", "msedge.exe"}
+		for _, name := range candidates {
+			if path, err := exec.LookPath(name); err == nil {
+				cmd := exec.Command(path, fmt.Sprintf("--app=%s", url))
+				if err := cmd.Start(); err == nil {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func openDefaultBrowser(url string) {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "linux":
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			return
+		}
+		cmd = exec.Command("xdg-open", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		return
+	}
+
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	_ = cmd.Start()
+}

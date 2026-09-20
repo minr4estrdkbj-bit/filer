@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <defs>
+    <linearGradient id="folderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0098ff"/>
+      <stop offset="100%" stop-color="#0066cc"/>
+    </linearGradient>
+    <linearGradient id="backGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0055aa"/>
+      <stop offset="100%" stop-color="#003d7a"/>
+    </linearGradient>
+  </defs>
+  <!-- Background Tab -->
+  <path d="M6 12C6 9.79086 7.79086 8 10 8H18.5858C19.6466 8 20.664 8.42143 21.4142 9.17157L24.8284 12.5858C25.5786 13.3359 26.596 13.7574 27.6569 13.7574H38C40.2091 13.7574 42 15.5482 42 17.7574V36C42 38.2091 40.2091 40 38 40H10C7.79086 40 6 38.2091 6 36V12Z" fill="url(#backGrad)"/>
+  <!-- Front Folder Body -->
+  <path d="M6 18C6 15.7909 7.79086 14 10 14H38C40.2091 14 42 15.7909 42 18V36C42 38.2091 40.2091 40 38 40H10C7.79086 40 6 38.2091 6 36V18Z" fill="url(#folderGrad)"/>
+  <!-- File symbols inside -->
+  <rect x="14" y="22" width="20" height="3" rx="1.5" fill="#ffffff" opacity="0.9"/>
+  <rect x="14" y="28" width="14" height="3" rx="1.5" fill="#ffffff" opacity="0.7"/>
+  <rect x="14" y="34" width="8" height="3" rx="1.5" fill="#ffffff" opacity="0.5"/>
+</svg>

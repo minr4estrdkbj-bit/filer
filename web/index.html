@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Filer</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="theme-dark">
+  <div id="app">
+    <!-- ヘッダー -->
+    <header id="header">
+      <div class="header-left">
+        <span class="app-icon" title="Filer">📁</span>
+        
+        <!-- パンくずナビゲーション -->
+        <nav id="breadcrumbs" class="breadcrumbs" title="クリックして階層移動 (ダブルクリックで直接入力)"></nav>
+        
+        <!-- パス直接入力バー (普段は非表示) -->
+        <input type="text" id="path-input" class="path-input" style="display: none;" spellcheck="false" autocomplete="off" placeholder="/path/to/directory">
+
+        <!-- パスコピーバッジ -->
+        <button id="btn-copy-path" class="btn-copy-path" title="カレントパスをコピー">
+          <svg class="copy-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          <svg class="check-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <span class="copy-tooltip" id="copy-tooltip">コピーしました！</span>
+        </button>
+      </div>
+
+      <div class="header-right">
+        <!-- 絞り込み検索 -->
+        <div class="search-box">
+          <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="filter-input" class="filter-input" placeholder="絞り込み ( / )" spellcheck="false" autocomplete="off">
+          <button id="filter-clear" class="btn-clear" style="display: none;" title="クリア (Esc)">✕</button>
+        </div>
+
+        <!-- 隠しファイルトグル -->
+        <button id="btn-hidden" class="btn btn-toggle" title="隠しファイルの表示切替 (.)">
+          <span class="toggle-dot"></span>
+          <span>隠しファイル</span>
+        </button>
+
+        <!-- ターミナルで開く -->
+        <button id="btn-term" class="btn btn-accent" title="このフォルダで端末を開く (t)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
+          <span>端末</span> <span class="shortcut-hint">(t)</span>
+        </button>
+
+        <!-- 更新 -->
+        <button id="btn-refresh" class="btn btn-icon" title="再読み込み (r)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+        </button>
+
+        <!-- テーマ切替 -->
+        <button id="btn-theme" class="btn btn-icon" title="テーマ切り替え">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- メイン一覧 (1カラム) -->
+    <main id="file-list-container">
+      <table id="file-table" class="file-table">
+        <thead>
+          <tr>
+            <th class="col-name sortable" data-sort="name">名前 <span class="sort-arrow"></span></th>
+            <th class="col-size sortable" data-sort="size">サイズ <span class="sort-arrow"></span></th>
+            <th class="col-mtime sortable" data-sort="mtime">更新日時 <span class="sort-arrow"></span></th>
+            <th class="col-mode">権限</th>
+          </tr>
+        </thead>
+        <tbody id="file-tbody">
+          <!-- JSで動的描画 -->
+        </tbody>
+      </table>
+      <div id="empty-message" class="empty-message" style="display: none;">
+        <span>このフォルダは空です</span>
+      </div>
+      <div id="loading-indicator" class="loading-indicator" style="display: none;">
+        <span>読み込み中...</span>
+      </div>
+    </main>
+
+    <!-- フッター (ステータスバー) -->
+    <footer id="statusbar">
+      <div class="statusbar-left">
+        <span id="status-selection">-</span>
+        <span id="status-counts" class="status-counts">-</span>
+      </div>
+      <div class="statusbar-right">
+        <span class="key-guide"><kbd>↑</kbd><kbd>↓</kbd> 移動</span>
+        <span class="key-guide"><kbd>→</kbd> / <kbd>Enter</kbd> 入る/開く</span>
+        <span class="key-guide"><kbd>←</kbd> 親階層</span>
+        <span class="key-guide"><kbd>/</kbd> 絞り込み</span>
+        <span class="key-guide"><kbd>.</kbd> 隠し表示</span>
+        <span class="key-guide"><kbd>t</kbd> 端末</span>
+        <span class="key-guide"><kbd>e</kbd> 編集</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
