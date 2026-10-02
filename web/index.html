@@ -14,6 +14,14 @@
       <div class="header-left">
         <span class="app-icon" title="Filer">📁</span>
         
+        <!-- 親ディレクトリへ戻るボタン -->
+        <button id="btn-parent" class="btn-parent" title="上の階層へ戻る (Backspace / h)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          <span class="btn-parent-text">親へ</span>
+        </button>
+
         <!-- パンくずナビゲーション -->
         <nav id="breadcrumbs" class="breadcrumbs" title="クリックして階層移動 (ダブルクリックで直接入力)"></nav>
         
@@ -122,6 +130,46 @@
         <span class="key-guide"><kbd>?</kbd> ヘルプ</span>
       </div>
     </footer>
+
+    <!-- モバイル用ボトムアクションバー (画面下部で親指タップ操作) -->
+    <nav id="mobile-toolbar" class="mobile-toolbar" aria-label="モバイルアクションツールバー">
+      <button id="mbtn-parent" class="mbtn" title="親フォルダへ (Backspace)">
+        <span class="mbtn-icon">⬆️</span>
+        <span class="mbtn-label">親へ</span>
+      </button>
+      <button id="mbtn-open" class="mbtn mbtn-accent" title="開く / 編集 (Enter)">
+        <span class="mbtn-icon" id="mbtn-open-icon">📂</span>
+        <span class="mbtn-label" id="mbtn-open-label">開く</span>
+      </button>
+      <button id="mbtn-new" class="mbtn" title="新規作成 (a)">
+        <span class="mbtn-icon">➕</span>
+        <span class="mbtn-label">新規</span>
+      </button>
+      <button id="mbtn-rename" class="mbtn" title="名前変更 (c)">
+        <span class="mbtn-icon">🏷️</span>
+        <span class="mbtn-label">リネーム</span>
+      </button>
+      <button id="mbtn-copy" class="mbtn" title="コピー (y)">
+        <span class="mbtn-icon">📋</span>
+        <span class="mbtn-label">コピー</span>
+      </button>
+      <button id="mbtn-cut" class="mbtn" title="移動 (x)">
+        <span class="mbtn-icon">✂️</span>
+        <span class="mbtn-label">移動</span>
+      </button>
+      <button id="mbtn-paste" class="mbtn" title="貼り付け (p)">
+        <span class="mbtn-icon">📥</span>
+        <span class="mbtn-label">貼付</span>
+      </button>
+      <button id="mbtn-delete" class="mbtn mbtn-danger" title="削除 (d)">
+        <span class="mbtn-icon">🗑️</span>
+        <span class="mbtn-label">削除</span>
+      </button>
+      <button id="mbtn-term" class="mbtn" title="端末 (t)">
+        <span class="mbtn-icon">💻</span>
+        <span class="mbtn-label">端末</span>
+      </button>
+    </nav>
 
     <!-- 操作ダイアログ (HUDモーダル) -->
     <div id="modal-overlay" class="modal-overlay" style="display: none;">

@@ -274,12 +274,16 @@ function renderTable() {
     tr.appendChild(tdMtime);
     tr.appendChild(tdMode);
 
-    // クリックで選択
+    // クリックで選択 (同じ項目を再タップした場合は開く)
     tr.addEventListener('click', () => {
-      setSelectedIndex(index);
+      if (selectedIndex === index) {
+        openCurrentItem();
+      } else {
+        setSelectedIndex(index);
+      }
     });
 
-    // ダブルクリックで入る/開く
+    // ダブルクリックで入る/開く (PC向け)
     tr.addEventListener('dblclick', () => {
       openCurrentItem();
     });
@@ -377,6 +381,41 @@ function updateStatusBar() {
     } else {
       clipEl.style.display = 'none';
     }
+  }
+
+  updateMobileToolbar();
+}
+
+// --- モバイルツールバーの表示更新 ---
+function updateMobileToolbar() {
+  const item = filteredItems[selectedIndex];
+  const openIcon = document.getElementById('mbtn-open-icon');
+  const openLabel = document.getElementById('mbtn-open-label');
+  if (openIcon && openLabel) {
+    if (item && item.isDir) {
+      openIcon.textContent = '📂';
+      openLabel.textContent = '開く';
+    } else {
+      openIcon.textContent = '✏️';
+      openLabel.textContent = '編集';
+    }
+  }
+
+  const pasteBtn = document.getElementById('mbtn-paste');
+  if (pasteBtn) {
+    pasteBtn.classList.toggle('has-clipboard', !!clipboard.path);
+  }
+
+  const parentBtn = document.getElementById('btn-parent');
+  const mbtnParent = document.getElementById('mbtn-parent');
+  const isRoot = !parentPath || parentPath === currentPath;
+  if (parentBtn) {
+    parentBtn.disabled = isRoot;
+    parentBtn.style.opacity = isRoot ? '0.35' : '1';
+  }
+  if (mbtnParent) {
+    mbtnParent.disabled = isRoot;
+    mbtnParent.style.opacity = isRoot ? '0.35' : '1';
   }
 }
 
@@ -924,6 +963,37 @@ function setupEvents() {
 
   // テーマ切替
   document.getElementById('btn-theme').addEventListener('click', toggleTheme);
+
+  // 親ディレクトリボタン & モバイルツールバー
+  const btnParent = document.getElementById('btn-parent');
+  if (btnParent) btnParent.addEventListener('click', navigateToParent);
+
+  const mbtnParent = document.getElementById('mbtn-parent');
+  if (mbtnParent) mbtnParent.addEventListener('click', navigateToParent);
+
+  const mbtnOpen = document.getElementById('mbtn-open');
+  if (mbtnOpen) mbtnOpen.addEventListener('click', openCurrentItem);
+
+  const mbtnNew = document.getElementById('mbtn-new');
+  if (mbtnNew) mbtnNew.addEventListener('click', promptCreate);
+
+  const mbtnRename = document.getElementById('mbtn-rename');
+  if (mbtnRename) mbtnRename.addEventListener('click', promptRename);
+
+  const mbtnCopy = document.getElementById('mbtn-copy');
+  if (mbtnCopy) mbtnCopy.addEventListener('click', copySelection);
+
+  const mbtnCut = document.getElementById('mbtn-cut');
+  if (mbtnCut) mbtnCut.addEventListener('click', cutSelection);
+
+  const mbtnPaste = document.getElementById('mbtn-paste');
+  if (mbtnPaste) mbtnPaste.addEventListener('click', pasteSelection);
+
+  const mbtnDelete = document.getElementById('mbtn-delete');
+  if (mbtnDelete) mbtnDelete.addEventListener('click', promptDelete);
+
+  const mbtnTerm = document.getElementById('mbtn-term');
+  if (mbtnTerm) mbtnTerm.addEventListener('click', () => openInWebterm(currentPath));
 
   // パスコピー
   setupCopyPath();
