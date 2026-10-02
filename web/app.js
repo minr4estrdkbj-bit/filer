@@ -326,8 +326,8 @@ function openCurrentItem() {
   if (item.isDir) {
     loadDirectory(item.path);
   } else {
-    // ファイルの場合は edit (ポート 8081) で開く
-    openInEdit(item.path);
+    // ファイルの場合は種別に応じて開く (.md -> marker, その他 -> edit)
+    openFileItem(item);
   }
 }
 
@@ -344,6 +344,25 @@ function openInEdit(filePath) {
   const host = location.hostname || 'localhost';
   const editUrl = `http://${host}:8081/?file=${encodeURIComponent(filePath)}`;
   window.open(editUrl, '_blank');
+}
+
+// --- marker で Markdown を開く (ポート 8083) ---
+function openInMarker(filePath) {
+  const host = location.hostname || 'localhost';
+  const markerUrl = `http://${host}:8083/?file=${encodeURIComponent(filePath)}`;
+  window.open(markerUrl, '_blank');
+}
+
+// --- ファイル種別に応じて適切なアプリで開く ---
+function openFileItem(item) {
+  if (!item) return;
+  const ext = (item.ext || '').toLowerCase();
+  const name = (item.name || '').toLowerCase();
+  if (ext === 'md' || ext === 'markdown' || name.endsWith('.md')) {
+    openInMarker(item.path);
+  } else {
+    openInEdit(item.path);
+  }
 }
 
 // --- webterm で端末を開く (t) ---
@@ -396,8 +415,15 @@ function updateMobileToolbar() {
       openIcon.textContent = '📂';
       openLabel.textContent = '開く';
     } else {
-      openIcon.textContent = '✏️';
-      openLabel.textContent = '編集';
+      const ext = (item?.ext || '').toLowerCase();
+      const name = (item?.name || '').toLowerCase();
+      if (ext === 'md' || ext === 'markdown' || name.endsWith('.md')) {
+        openIcon.textContent = '📝';
+        openLabel.textContent = 'Marker';
+      } else {
+        openIcon.textContent = '✏️';
+        openLabel.textContent = '編集';
+      }
     }
   }
 
@@ -860,7 +886,7 @@ function setupEvents() {
       e.preventDefault();
       const item = filteredItems[selectedIndex];
       if (item && !item.isDir) {
-        openInEdit(item.path);
+        openFileItem(item);
       }
     }
     // 更新 (r)
