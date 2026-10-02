@@ -337,13 +337,15 @@ function navigateToParent() {
 
 // --- edit でファイルを開く ---
 function openInEdit(filePath) {
-  const editUrl = `http://localhost:8081/?file=${encodeURIComponent(filePath)}`;
+  const host = location.hostname || 'localhost';
+  const editUrl = `http://${host}:8081/?file=${encodeURIComponent(filePath)}`;
   window.open(editUrl, '_blank');
 }
 
 // --- webterm で端末を開く (t) ---
 function openInWebterm(dirPath) {
-  const termUrl = `http://localhost:8080/?cwd=${encodeURIComponent(dirPath)}`;
+  const host = location.hostname || 'localhost';
+  const termUrl = `http://${host}:8080/?cwd=${encodeURIComponent(dirPath)}`;
   window.open(termUrl, '_blank');
 }
 

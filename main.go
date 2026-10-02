@@ -258,6 +258,7 @@ func runOnDemandServer(initialDir string, port int, appMode bool, noBrowser bool
 
 func handleServerCommand(args []string) {
 	fsFlags := flag.NewFlagSet("server", flag.ExitOnError)
+	hostFlag := fsFlags.String("host", "127.0.0.1", "ホストアドレス")
 	portFlag := fsFlags.Int("port", DefaultPort, "ポート番号")
 	foregroundFlag := fsFlags.Bool("foreground", false, "フォアグラウンドで実行")
 	fsFlags.BoolVar(foregroundFlag, "f", false, "フォアグラウンドで実行 (短縮)")
@@ -271,7 +272,7 @@ func handleServerCommand(args []string) {
 			log.Fatalf("実行ファイルのパス取得に失敗しました: %v", err)
 		}
 
-		cmd := exec.Command(execPath, "server", "-f", fmt.Sprintf("-port=%d", *portFlag))
+		cmd := exec.Command(execPath, "server", "-f", fmt.Sprintf("-host=%s", *hostFlag), fmt.Sprintf("-port=%d", *portFlag))
 		cmd.Env = append(os.Environ(), "_FILER_BACKGROUND_SERVER=1")
 		cmd.Stdin = nil
 		cmd.Stdout = nil
@@ -282,17 +283,17 @@ func handleServerCommand(args []string) {
 
 		fmt.Println("==================================================")
 		fmt.Println("✅ Filer 常駐サーバーをバックグラウンドで起動しました")
-		fmt.Printf("🌐 URL: http://localhost:%d/\n", *portFlag)
+		fmt.Printf("🌐 URL: http://%s:%d/\n", *hostFlag, *portFlag)
 		fmt.Println("==================================================")
 		return
 	}
 
-	runPersistentServer(*portFlag, *foregroundFlag)
+	runPersistentServer(*hostFlag, *portFlag, *foregroundFlag)
 }
 
-func runPersistentServer(port int, foreground bool) {
+func runPersistentServer(host string, port int, foreground bool) {
 	isPersistentServer = true
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	addr := fmt.Sprintf("%s:%d", host, port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("ポートのバインドに失敗しました (%s): %v", addr, err)
@@ -363,7 +364,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%s server -f
+ExecStart=%s server -f -host 0.0.0.0
 Restart=on-failure
 RestartSec=3
 PassEnvironment=DISPLAY XAUTHORITY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS
