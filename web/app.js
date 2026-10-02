@@ -13,6 +13,16 @@ let sortKey = localStorage.getItem('filer_sort_key') || 'name';
 let sortAsc = localStorage.getItem('filer_sort_asc') !== 'false';
 let currentTheme = localStorage.getItem('filer_theme') || 'theme-dark';
 
+let clipboard = {
+  action: null, // 'copy' | 'cut'
+  path: '',
+  name: '',
+  isDir: false
+};
+let isModalOpen = false;
+let modalCallback = null;
+let isHelpOpen = false;
+
 // --- 初期化 ---
 async function init() {
   applyTheme(currentTheme);
@@ -214,7 +224,8 @@ function renderTable() {
 
   filteredItems.forEach((item, index) => {
     const tr = document.createElement('tr');
-    tr.className = `file-row ${item.isDir ? 'is-dir' : ''} ${item.isSymlink ? 'is-symlink' : ''} ${index === selectedIndex ? 'selected' : ''}`;
+    const isCut = clipboard.action === 'cut' && item.path === clipboard.path;
+    tr.className = `file-row ${item.isDir ? 'is-dir' : ''} ${item.isSymlink ? 'is-symlink' : ''} ${index === selectedIndex ? 'selected' : ''} ${isCut ? 'is-cut' : ''}`;
     tr.dataset.index = index;
 
     // 名前セル
@@ -353,6 +364,330 @@ function updateStatusBar() {
     selEl.textContent = `${item.name} (${sizeStr}) - ${item.mode}`;
     countEl.textContent = `${selectedIndex + 1} / ${filteredItems.length} 項目 (全 ${allItems.length})`;
   }
+
+  const clipEl = document.getElementById('status-clipboard');
+  if (clipEl) {
+    if (clipboard.path) {
+      clipEl.style.display = 'inline-flex';
+      const icon = clipboard.action === 'copy' ? '📋' : '✂️';
+      clipEl.textContent = `${icon} ${clipboard.name}`;
+      clipEl.title = `${clipboard.action === 'copy' ? 'コピー中' : '移動中'}: ${clipboard.path} (p: 貼り付け)`;
+    } else {
+      clipEl.style.display = 'none';
+    }
+  }
+}
+
+// --- トースト通知 ---
+let toastTimeout = null;
+function showToast(message, duration = 2200) {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.style.display = 'block';
+  if (toastTimeout) clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => {
+    toast.style.display = 'none';
+  }, duration);
+}
+
+// --- モーダル (入力/確認) ---
+function showPromptModal({ title, initialValue = '', hint = '', selectRange = null, onConfirm }) {
+  const overlay = document.getElementById('modal-overlay');
+  const titleEl = document.getElementById('modal-title');
+  const msgEl = document.getElementById('modal-message');
+  const inputEl = document.getElementById('modal-input');
+  const hintEl = document.getElementById('modal-hint');
+  const btnConfirm = document.getElementById('modal-btn-confirm');
+
+  titleEl.textContent = title;
+  msgEl.style.display = 'none';
+  inputEl.style.display = 'block';
+  inputEl.value = initialValue;
+  hintEl.textContent = hint;
+  hintEl.style.display = hint ? 'block' : 'none';
+  btnConfirm.textContent = '決定 (Enter)';
+  btnConfirm.className = 'btn btn-primary';
+
+  overlay.style.display = 'flex';
+  isModalOpen = true;
+
+  inputEl.focus();
+  if (selectRange) {
+    inputEl.setSelectionRange(selectRange.start, selectRange.end);
+  } else {
+    inputEl.select();
+  }
+
+  modalCallback = async () => {
+    const val = inputEl.value.trim();
+    if (!val) return;
+    const ok = await onConfirm(val);
+    if (ok) closeModal();
+  };
+}
+
+function showConfirmModal({ title, message, isDanger = false, onConfirm }) {
+  const overlay = document.getElementById('modal-overlay');
+  const titleEl = document.getElementById('modal-title');
+  const msgEl = document.getElementById('modal-message');
+  const inputEl = document.getElementById('modal-input');
+  const hintEl = document.getElementById('modal-hint');
+  const btnConfirm = document.getElementById('modal-btn-confirm');
+
+  titleEl.textContent = title;
+  msgEl.textContent = message;
+  msgEl.style.display = 'block';
+  inputEl.style.display = 'none';
+  hintEl.textContent = 'Enter または y で実行、Esc でキャンセル';
+  hintEl.style.display = 'block';
+  btnConfirm.textContent = isDanger ? '削除 (Enter)' : '決定 (Enter)';
+  btnConfirm.className = isDanger ? 'btn btn-danger' : 'btn btn-primary';
+
+  overlay.style.display = 'flex';
+  isModalOpen = true;
+  btnConfirm.focus();
+
+  modalCallback = async () => {
+    const ok = await onConfirm();
+    if (ok) closeModal();
+  };
+}
+
+function closeModal() {
+  const overlay = document.getElementById('modal-overlay');
+  overlay.style.display = 'none';
+  isModalOpen = false;
+  modalCallback = null;
+}
+
+function toggleHelpModal(show) {
+  const helpOverlay = document.getElementById('help-overlay');
+  if (show === undefined) {
+    isHelpOpen = !isHelpOpen;
+  } else {
+    isHelpOpen = show;
+  }
+  helpOverlay.style.display = isHelpOpen ? 'flex' : 'none';
+}
+
+// --- 新規作成 (a / n) ---
+function promptCreate() {
+  showPromptModal({
+    title: '新規作成 (ファイル / フォルダ)',
+    initialValue: '',
+    hint: '末尾に / を付けるとフォルダを作成します (例: folder/)',
+    onConfirm: async (name) => {
+      try {
+        const res = await fetch('/api/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cwd: currentPath,
+            name: name,
+            isDir: name.endsWith('/')
+          })
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          alert('作成に失敗しました: ' + err);
+          return false;
+        }
+        const data = await res.json();
+        showToast(`✨ 作成しました: ${name}`);
+        await loadDirectory(currentPath, data.path);
+        return true;
+      } catch (e) {
+        alert('通信エラー: ' + e.message);
+        return false;
+      }
+    }
+  });
+}
+
+// --- リネーム (c / F2 / R) ---
+function promptRename() {
+  if (filteredItems.length === 0) return;
+  const item = filteredItems[selectedIndex];
+  if (!item) return;
+
+  const dotIdx = item.isDir ? -1 : item.name.lastIndexOf('.');
+  const selectRange = (dotIdx > 0) ? { start: 0, end: dotIdx } : null;
+
+  showPromptModal({
+    title: `名前の変更: ${item.name}`,
+    initialValue: item.name,
+    hint: '新しい名前を入力してください',
+    selectRange: selectRange,
+    onConfirm: async (newName) => {
+      if (newName === item.name) return true;
+      try {
+        const res = await fetch('/api/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            oldPath: item.path,
+            newName: newName
+          })
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          alert('名前の変更に失敗しました: ' + err);
+          return false;
+        }
+        const data = await res.json();
+        showToast(`✏️ リネームしました: ${newName}`);
+        if (clipboard.path === item.path) {
+          clipboard.path = data.path;
+          clipboard.name = newName;
+        }
+        await loadDirectory(currentPath, data.path);
+        return true;
+      } catch (e) {
+        alert('通信エラー: ' + e.message);
+        return false;
+      }
+    }
+  });
+}
+
+// --- 削除 (d / Delete) ---
+function promptDelete() {
+  if (filteredItems.length === 0) return;
+  const item = filteredItems[selectedIndex];
+  if (!item) return;
+
+  const typeLabel = item.isDir ? 'フォルダ' : 'ファイル';
+  showConfirmModal({
+    title: `${typeLabel}の削除`,
+    message: `「${item.name}」をゴミ箱に移動しますか？`,
+    isDanger: true,
+    onConfirm: async () => {
+      try {
+        const res = await fetch('/api/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: item.path })
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          alert('削除に失敗しました: ' + err);
+          return false;
+        }
+        const data = await res.json();
+        const actionStr = data.trashed ? 'ゴミ箱へ移動しました' : '削除しました';
+        showToast(`🗑️ ${actionStr}: ${item.name}`);
+        if (clipboard.path === item.path) {
+          clearClipboard();
+        }
+        await loadDirectory(currentPath);
+        return true;
+      } catch (e) {
+        alert('通信エラー: ' + e.message);
+        return false;
+      }
+    }
+  });
+}
+
+// --- コピー (y / Ctrl+C) ---
+function copySelection() {
+  if (filteredItems.length === 0) return;
+  const item = filteredItems[selectedIndex];
+  if (!item) return;
+
+  clipboard = {
+    action: 'copy',
+    path: item.path,
+    name: item.name,
+    isDir: item.isDir
+  };
+  showToast(`📋 コピーしました: ${item.name}`);
+  updateStatusBar();
+  renderTable();
+}
+
+// --- 切り取り (x / Ctrl+X) ---
+function cutSelection() {
+  if (filteredItems.length === 0) return;
+  const item = filteredItems[selectedIndex];
+  if (!item) return;
+
+  clipboard = {
+    action: 'cut',
+    path: item.path,
+    name: item.name,
+    isDir: item.isDir
+  };
+  showToast(`✂️ 切り取りました: ${item.name}`);
+  updateStatusBar();
+  renderTable();
+}
+
+function clearClipboard() {
+  clipboard = { action: null, path: '', name: '', isDir: false };
+  updateStatusBar();
+  renderTable();
+}
+
+// --- 貼り付け (p / Ctrl+V) ---
+async function pasteSelection() {
+  if (!clipboard.path) {
+    showToast('クリップボードは空です');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/paste', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: clipboard.action,
+        srcPath: clipboard.path,
+        destDir: currentPath
+      })
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      alert('貼り付けに失敗しました: ' + err);
+      return;
+    }
+    const data = await res.json();
+    const actionLabel = clipboard.action === 'move' || clipboard.action === 'cut' ? '移動しました' : '貼り付けました';
+    showToast(`✅ ${actionLabel}: ${basename(data.destPath)}`);
+
+    if (clipboard.action === 'cut') {
+      clipboard = { action: null, path: '', name: '', isDir: false };
+    }
+    await loadDirectory(currentPath, data.destPath);
+  } catch (e) {
+    alert('通信エラー: ' + e.message);
+  }
+}
+
+// --- 複製 (D / Ctrl+D) ---
+async function duplicateSelection() {
+  if (filteredItems.length === 0) return;
+  const item = filteredItems[selectedIndex];
+  if (!item) return;
+
+  try {
+    const res = await fetch('/api/duplicate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: item.path })
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      alert('複製に失敗しました: ' + err);
+      return;
+    }
+    const data = await res.json();
+    showToast(`📑 複製しました: ${basename(data.destPath)}`);
+    await loadDirectory(currentPath, data.destPath);
+  } catch (e) {
+    alert('通信エラー: ' + e.message);
+  }
 }
 
 // --- イベント登録 ---
@@ -364,38 +699,70 @@ function setupEvents() {
 
   // キーボード操作 (メイン)
   window.addEventListener('keydown', (e) => {
-    const isInputFocused = (document.activeElement === filterInput || document.activeElement === pathInput);
-
-    // Esc キー: 検索入力やパス入力を解除してリストに戻る
-    if (e.key === 'Escape') {
-      if (document.activeElement === filterInput) {
-        filterInput.value = '';
-        filterClear.style.display = 'none';
-        filterInput.blur();
-        applyFilterAndSort();
-        renderTable();
-      }
-      if (pathInput.style.display !== 'none') {
-        pathInput.style.display = 'none';
-        breadcrumbs.style.display = 'flex';
+    // 1. モーダル表示中のキー処理
+    if (isModalOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeModal();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (modalCallback) modalCallback();
+      } else if (!document.getElementById('modal-input').offsetParent && (e.key === 'y' || e.key === 'Y')) {
+        // 確認モーダルで入力欄がない場合、y で確定
+        e.preventDefault();
+        if (modalCallback) modalCallback();
       }
       return;
     }
 
-    // 入力フォーカス中の場合、Enterで実行
+    // 2. ヘルプモーダル表示中のキー処理
+    if (isHelpOpen) {
+      if (e.key === 'Escape' || e.key === '?') {
+        e.preventDefault();
+        toggleHelpModal(false);
+      }
+      return;
+    }
+
+    const isInputFocused = (document.activeElement === filterInput || document.activeElement === pathInput);
+
+    // 3. 検索入力やパス入力を解除してリストに戻る (Esc)
     if (isInputFocused) {
+      if (e.key === 'Escape') {
+        if (document.activeElement === filterInput) {
+          filterInput.value = '';
+          filterClear.style.display = 'none';
+          filterInput.blur();
+          applyFilterAndSort();
+          renderTable();
+        }
+        if (pathInput.style.display !== 'none') {
+          pathInput.style.display = 'none';
+          breadcrumbs.style.display = 'flex';
+        }
+        return;
+      }
+
+      // 入力フォーカス中の場合、Enterで実行
       if (e.key === 'Enter') {
         if (document.activeElement === filterInput) {
-          // 絞り込み入力から Enter で先頭の項目を開く
           filterInput.blur();
           openCurrentItem();
         } else if (document.activeElement === pathInput) {
-          // パス直接入力
           const p = pathInput.value.trim();
           pathInput.style.display = 'none';
           breadcrumbs.style.display = 'flex';
           if (p) loadDirectory(p);
         }
+      }
+      return;
+    }
+
+    // Esc キー: 切り取り (Cut) 状態の解除
+    if (e.key === 'Escape') {
+      if (clipboard.action === 'cut') {
+        clearClipboard();
+        showToast('切り取りを解除しました');
       }
       return;
     }
@@ -460,6 +827,68 @@ function setupEvents() {
       e.preventDefault();
       loadDirectory(currentPath);
     }
+    // 新規作成 (a / n)
+    else if (e.key === 'a' || e.key === 'n') {
+      e.preventDefault();
+      promptCreate();
+    }
+    // 名前変更 (c / F2 / R)
+    else if (e.key === 'c' || e.key === 'F2' || (e.shiftKey && e.key === 'R')) {
+      e.preventDefault();
+      promptRename();
+    }
+    // 削除 (d / Delete)
+    else if (e.key === 'd' || e.key === 'Delete') {
+      e.preventDefault();
+      promptDelete();
+    }
+    // コピー (y / Ctrl+C)
+    else if (e.key === 'y' || ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C'))) {
+      e.preventDefault();
+      copySelection();
+    }
+    // 切り取り (x / Ctrl+X)
+    else if (e.key === 'x' || ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X'))) {
+      e.preventDefault();
+      cutSelection();
+    }
+    // 貼り付け (p / Ctrl+V)
+    else if (e.key === 'p' || ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V'))) {
+      e.preventDefault();
+      pasteSelection();
+    }
+    // 複製 (D / Ctrl+D)
+    else if ((e.shiftKey && e.key === 'D') || ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D'))) {
+      e.preventDefault();
+      duplicateSelection();
+    }
+    // ヘルプ表示 (?)
+    else if (e.key === '?') {
+      e.preventDefault();
+      toggleHelpModal(true);
+    }
+  });
+
+  // モーダル操作イベント
+  const modalCloseBtn = document.getElementById('modal-close');
+  if (modalCloseBtn) modalCloseBtn.addEventListener('click', closeModal);
+  const modalCancelBtn = document.getElementById('modal-btn-cancel');
+  if (modalCancelBtn) modalCancelBtn.addEventListener('click', closeModal);
+  const modalConfirmBtn = document.getElementById('modal-btn-confirm');
+  if (modalConfirmBtn) modalConfirmBtn.addEventListener('click', () => {
+    if (modalCallback) modalCallback();
+  });
+  const modalOverlay = document.getElementById('modal-overlay');
+  if (modalOverlay) modalOverlay.addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay') closeModal();
+  });
+
+  // ヘルプモーダルイベント
+  const helpCloseBtn = document.getElementById('help-close');
+  if (helpCloseBtn) helpCloseBtn.addEventListener('click', () => toggleHelpModal(false));
+  const helpOverlay = document.getElementById('help-overlay');
+  if (helpOverlay) helpOverlay.addEventListener('click', (e) => {
+    if (e.target.id === 'help-overlay') toggleHelpModal(false);
   });
 
   // フィルタ入力イベント

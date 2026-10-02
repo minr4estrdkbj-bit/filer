@@ -114,15 +114,82 @@
         <span id="status-counts" class="status-counts">-</span>
       </div>
       <div class="statusbar-right">
-        <span class="key-guide"><kbd>↑</kbd><kbd>↓</kbd> 移動</span>
-        <span class="key-guide"><kbd>→</kbd> / <kbd>Enter</kbd> 入る/開く</span>
-        <span class="key-guide"><kbd>←</kbd> 親階層</span>
-        <span class="key-guide"><kbd>/</kbd> 絞り込み</span>
-        <span class="key-guide"><kbd>.</kbd> 隠し表示</span>
-        <span class="key-guide"><kbd>t</kbd> 端末</span>
-        <span class="key-guide"><kbd>e</kbd> 編集</span>
+        <span id="status-clipboard" class="status-clipboard" style="display: none;"></span>
+        <span class="key-guide"><kbd>a</kbd> 新規</span>
+        <span class="key-guide"><kbd>c</kbd> リネーム</span>
+        <span class="key-guide"><kbd>d</kbd> 削除</span>
+        <span class="key-guide"><kbd>y</kbd>/<kbd>x</kbd>/<kbd>p</kbd> コピペ</span>
+        <span class="key-guide"><kbd>?</kbd> ヘルプ</span>
       </div>
     </footer>
+
+    <!-- 操作ダイアログ (HUDモーダル) -->
+    <div id="modal-overlay" class="modal-overlay" style="display: none;">
+      <div class="modal-box">
+        <div class="modal-header">
+          <span id="modal-title" class="modal-title">タイトル</span>
+          <button id="modal-close" class="modal-close" title="閉じる (Esc)">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="modal-message" class="modal-message" style="display: none;"></div>
+          <input type="text" id="modal-input" class="modal-input" spellcheck="false" autocomplete="off">
+          <div id="modal-hint" class="modal-hint"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="modal-btn-cancel" class="btn btn-secondary">キャンセル (Esc)</button>
+          <button id="modal-btn-confirm" class="btn btn-primary">決定 (Enter)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ヘルプモーダル (? キー) -->
+    <div id="help-overlay" class="modal-overlay" style="display: none;">
+      <div class="modal-box help-box">
+        <div class="modal-header">
+          <span class="modal-title">⌨️ キーボードショートカット</span>
+          <button id="help-close" class="modal-close" title="閉じる (Esc)">✕</button>
+        </div>
+        <div class="modal-body help-body">
+          <div class="help-section">
+            <div class="help-section-title">移動・ナビゲーション</div>
+            <div class="help-grid">
+              <div><kbd>↓</kbd> / <kbd>j</kbd></div><div>次の項目を選択</div>
+              <div><kbd>↑</kbd> / <kbd>k</kbd></div><div>前の項目を選択</div>
+              <div><kbd>→</kbd> / <kbd>Enter</kbd> / <kbd>l</kbd></div><div>フォルダに入る / ファイルを開く</div>
+              <div><kbd>←</kbd> / <kbd>Backspace</kbd> / <kbd>h</kbd></div><div>親フォルダに戻る</div>
+              <div><kbd>Home</kbd> / <kbd>End</kbd></div><div>先頭 / 末尾へジャンプ</div>
+              <div><kbd>/</kbd></div><div>インクリメンタル絞り込み検索</div>
+              <div><kbd>.</kbd></div><div>隠しファイル表示切替</div>
+              <div><kbd>r</kbd></div><div>再読み込み (更新)</div>
+            </div>
+          </div>
+          <div class="help-section">
+            <div class="help-section-title">ファイル操作</div>
+            <div class="help-grid">
+              <div><kbd>a</kbd> / <kbd>n</kbd></div><div>新規作成 (末尾 / でフォルダ)</div>
+              <div><kbd>c</kbd> / <kbd>F2</kbd> / <kbd>R</kbd></div><div>名前の変更 (リネーム)</div>
+              <div><kbd>d</kbd> / <kbd>Delete</kbd></div><div>ゴミ箱へ移動 (削除)</div>
+              <div><kbd>y</kbd> / <kbd>Ctrl+C</kbd></div><div>コピー (Yank)</div>
+              <div><kbd>x</kbd> / <kbd>Ctrl+X</kbd></div><div>切り取り (移動)</div>
+              <div><kbd>p</kbd> / <kbd>Ctrl+V</kbd></div><div>貼り付け (Paste)</div>
+              <div><kbd>D</kbd> / <kbd>Ctrl+D</kbd></div><div>複製 (その場にコピー)</div>
+            </div>
+          </div>
+          <div class="help-section">
+            <div class="help-section-title">外部ツール &amp; その他</div>
+            <div class="help-grid">
+              <div><kbd>e</kbd></div><div>Edit (Monaco Editor) で開く</div>
+              <div><kbd>t</kbd></div><div>Web ターミナルを開く</div>
+              <div><kbd>?</kbd></div><div>このヘルプを表示 / 非表示</div>
+              <div><kbd>Esc</kbd></div><div>検索解除 / モーダルを閉じる</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- トースト通知 -->
+    <div id="toast" class="toast" style="display: none;"></div>
   </div>
 
   <script src="/app.js"></script>
