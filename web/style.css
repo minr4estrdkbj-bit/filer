@@ -51,6 +51,7 @@ body {
   background-color: var(--bg-primary);
   overflow: hidden;
   height: 100vh;
+  height: 100dvh;
   user-select: none;
 }
 
@@ -58,7 +59,9 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
+  overflow: hidden;
 }
 
 /* Header */
@@ -301,7 +304,8 @@ body {
 
 /* Main Table */
 #file-list-container {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   position: relative;
   overflow-y: auto;
   overflow-x: hidden;
@@ -779,14 +783,28 @@ kbd {
     display: none;
   }
 
+  /* Compact statusbar on mobile */
+  #statusbar {
+    height: 22px;
+    font-size: 11px;
+    padding: 0 8px;
+    border-top: 1px solid var(--border-color);
+    flex-shrink: 0;
+  }
+  .status-counts {
+    display: none;
+  }
+
   /* Mobile Bottom Action Toolbar */
   .mobile-toolbar {
-    display: flex;
+    display: flex !important;
     align-items: center;
     justify-content: space-around;
     background-color: var(--bg-secondary);
     border-top: 1px solid var(--border-color);
-    padding: 6px 4px 8px;
+    padding: 4px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    height: 52px;
+    min-height: 52px;
     flex-shrink: 0;
     gap: 2px;
     overflow-x: auto;

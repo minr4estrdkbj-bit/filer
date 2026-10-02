@@ -458,6 +458,10 @@ func createMux() *http.ServeMux {
 
 	fileServer := http.FileServer(http.FS(webSubFS))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			data, err := webSubFS.Open("index.html")
 			if err == nil {
