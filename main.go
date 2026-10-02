@@ -94,6 +94,7 @@ func main() {
 	}
 
 	_ = fsFlags.Parse(os.Args[1:])
+	ensureGUIEnv()
 
 	targetDir := "."
 	if fsFlags.NArg() > 0 {
@@ -364,6 +365,7 @@ Type=simple
 ExecStart=%s server -f
 Restart=on-failure
 RestartSec=3
+PassEnvironment=DISPLAY XAUTHORITY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS
 
 [Install]
 WantedBy=default.target
@@ -563,7 +565,47 @@ func formatSize(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
+func ensureGUIEnv() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+		out, err := exec.Command("systemctl", "--user", "show-environment").Output()
+		if err == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "DISPLAY=") && os.Getenv("DISPLAY") == "" {
+					os.Setenv("DISPLAY", strings.TrimPrefix(line, "DISPLAY="))
+				}
+				if strings.HasPrefix(line, "XAUTHORITY=") && os.Getenv("XAUTHORITY") == "" {
+					os.Setenv("XAUTHORITY", strings.TrimPrefix(line, "XAUTHORITY="))
+				}
+				if strings.HasPrefix(line, "WAYLAND_DISPLAY=") && os.Getenv("WAYLAND_DISPLAY") == "" {
+					os.Setenv("WAYLAND_DISPLAY", strings.TrimPrefix(line, "WAYLAND_DISPLAY="))
+				}
+				if strings.HasPrefix(line, "DBUS_SESSION_BUS_ADDRESS=") && os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+					os.Setenv("DBUS_SESSION_BUS_ADDRESS", strings.TrimPrefix(line, "DBUS_SESSION_BUS_ADDRESS="))
+				}
+			}
+		}
+
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			if _, err := os.Stat("/tmp/.X11-unix/X0"); err == nil {
+				os.Setenv("DISPLAY", ":0")
+			}
+		}
+		if os.Getenv("XAUTHORITY") == "" {
+			home, _ := os.UserHomeDir()
+			xauth := filepath.Join(home, ".Xauthority")
+			if _, err := os.Stat(xauth); err == nil {
+				os.Setenv("XAUTHORITY", xauth)
+			}
+		}
+	}
+}
+
 func openBrowser(url string, appMode bool) {
+	ensureGUIEnv()
 	if appMode && openAppWindow(url) {
 		return
 	}
@@ -571,6 +613,7 @@ func openBrowser(url string, appMode bool) {
 }
 
 func openAppWindow(url string) bool {
+	ensureGUIEnv()
 	switch runtime.GOOS {
 	case "linux":
 		candidates := []string{
@@ -618,6 +661,7 @@ func openAppWindow(url string) bool {
 }
 
 func openDefaultBrowser(url string) {
+	ensureGUIEnv()
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
