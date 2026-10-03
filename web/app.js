@@ -187,6 +187,9 @@ function getItemIcon(item) {
     return '🔗';
   }
   const ext = item.ext.toLowerCase();
+  if (ext === 'paint') {
+    return '🎨';
+  }
   if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'].includes(ext)) {
     return '🖼️';
   }
@@ -367,7 +370,7 @@ function openFileItem(item) {
   const name = (item.name || '').toLowerCase();
   if (ext === 'md' || ext === 'markdown' || name.endsWith('.md')) {
     openInMarker(item.path);
-  } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
+  } else if (['png', 'jpg', 'jpeg', 'webp', 'paint'].includes(ext)) {
     openInPaint(item.path);
   } else {
     openInEdit(item.path);
