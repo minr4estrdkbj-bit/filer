@@ -353,6 +353,13 @@ function openInMarker(filePath) {
   window.open(markerUrl, '_blank');
 }
 
+// --- paint で画像を開く (ポート 8084) ---
+function openInPaint(filePath) {
+  const host = location.hostname || 'localhost';
+  const paintUrl = `http://${host}:8084/?file=${encodeURIComponent(filePath)}`;
+  window.open(paintUrl, '_blank');
+}
+
 // --- ファイル種別に応じて適切なアプリで開く ---
 function openFileItem(item) {
   if (!item) return;
@@ -360,6 +367,8 @@ function openFileItem(item) {
   const name = (item.name || '').toLowerCase();
   if (ext === 'md' || ext === 'markdown' || name.endsWith('.md')) {
     openInMarker(item.path);
+  } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
+    openInPaint(item.path);
   } else {
     openInEdit(item.path);
   }
